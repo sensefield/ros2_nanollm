@@ -38,7 +38,12 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-		'nano_llm_py = ros2_nanollm.nano_llm_py:main'
+		'nano_llm_py = ros2_nanollm.nano_llm_py:main',
+        'subscriber = ros2_nanollm.subscriber:main',
+        'pub = ros2_nanollm.pub:main',
+        'sub = ros2_nanollm.sub:main',
+        # 'image_saver = image_saver.image_saver:main',
         ],
     },
+    
 )
