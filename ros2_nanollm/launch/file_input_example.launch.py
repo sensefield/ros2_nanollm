@@ -52,7 +52,8 @@ def generate_launch_description():
             package='ros2_nanollm', #make sure package is named this
             executable='nano_llm_py',
             parameters=[{
-                'model': 'Efficient-Large-Model/VILA1.5-3b',
+                # 'model': 'Efficient-Large-Model/VILA1.5-3b',
+                'model': 'Efficient-Large-Model/VILA1.5-13b',
                 'api': api, #'mlc',
                 'quantization': quantization, #'q4f16_ft',
             }]

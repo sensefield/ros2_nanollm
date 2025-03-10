@@ -16,6 +16,7 @@
 import rclpy 
 from rclpy.node import Node
 from std_msgs.msg import String
+from nanollm_interfaces.msg import StringStamped
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from PIL import Image as im
@@ -64,7 +65,7 @@ class Nano_LLM_Subscriber(Node):
 
         ##  PUBLISHER
 
-        self.output_publisher = self.create_publisher(String, '/output', 10)
+        self.output_publisher = self.create_publisher(StringStamped, '/output', 10)
         self.query = "Describe the image."
 
     def query_listener_callback(self, msg):
@@ -77,6 +78,7 @@ class Nano_LLM_Subscriber(Node):
         input_query = self.query        
         self.get_logger().info(f"image_listener_callback") # debug
         # call model with input_query and input_image 
+        stamp = data.header.stamp
         cv_img = self.cv_br.imgmsg_to_cv2(data, 'rgb8')
         PIL_img = im.fromarray(cv_img)
 
@@ -100,7 +102,9 @@ class Nano_LLM_Subscriber(Node):
         )
 
         #FIX PUBLISHER 
-        output_msg = String()
+        # output_msg = String()
+        output_msg = StringStamped()
+        output_msg.header.stamp = stamp
         output_msg.data = output
         self.output_publisher.publish(output_msg)
         self.get_logger().info(f"output: {output_msg}")
