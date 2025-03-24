@@ -29,7 +29,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
 	('share/' + package_name, glob('launch/*.launch.py')),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'nanollm_interfaces'],
     zip_safe=True,
     maintainer='kshaltiel',
     maintainer_email='kshaltiel@nvidia.com',
@@ -38,7 +38,11 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-		'nano_llm_py = ros2_nanollm.nano_llm_py:main'
+		'nano_llm_py = ros2_nanollm.nano_llm_py:main',
+        'offline_llm_video_description_py = ros2_nanollm.offline_llm_video_description_py:main',
+        'rosbag_nano_llm_py = ros2_nanollm.rosbag_nano_llm_py:main'
+        # 'image_saver = image_saver.image_saver:main',
         ],
     },
+    
 )
