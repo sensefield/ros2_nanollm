@@ -39,9 +39,8 @@ setup(
     entry_points={
         'console_scripts': [
 		'nano_llm_py = ros2_nanollm.nano_llm_py:main',
-        'subscriber = ros2_nanollm.subscriber:main',
-        'pub = ros2_nanollm.pub:main',
-        'sub = ros2_nanollm.sub:main',
+        'offline_llm_video_description_py = ros2_nanollm.offline_llm_video_description_py:main',
+        'rosbag_nano_llm_py = ros2_nanollm.rosbag_nano_llm_py:main'
         # 'image_saver = image_saver.image_saver:main',
         ],
     },
