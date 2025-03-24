@@ -40,7 +40,8 @@ setup(
         'console_scripts': [
 		'nano_llm_py = ros2_nanollm.nano_llm_py:main',
         'offline_llm_video_description_py = ros2_nanollm.offline_llm_video_description_py:main',
-        'rosbag_nano_llm_py = ros2_nanollm.rosbag_nano_llm_py:main'
+        'rosbag_nano_llm_py = ros2_nanollm.rosbag_nano_llm_py:main',
+        'rosbag_image_caption_scorer = ros2_nanollm.rosbag_image_caption_scorer:main',
         # 'image_saver = image_saver.image_saver:main',
         ],
     },
