@@ -14,10 +14,32 @@ import os
 import csv
 import cv2
 
-class RosbagImageCaptionScorer(Node):  # ← クラス名変更
+def wrap_text(text, max_width, font_face, font_scale, thickness):
+    """
+    C++ の wrapText 処理に相当する機能を実装。
+    長いテキストを空白区切りの単語単位でチェックし、max_width を超える場合に改行を入れた行のリストを返す。
+    """
+    lines = []
+    words = text.split()
+    current_line = ""
 
+    for word in words:
+        test_line = word if not current_line else (current_line + " " + word)
+        (text_width, _), _ = cv2.getTextSize(test_line, font_face, font_scale, thickness)
+        if text_width > max_width:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+        else:
+            current_line = test_line
+
+    if current_line:
+        lines.append(current_line)
+    return lines
+
+class RosbagImageCaptionScorer(Node):
     def __init__(self):
-        super().__init__('rosbag_image_caption_scorer')  # ノード名も合わせてわかりやすく
+        super().__init__('rosbag_image_caption_scorer')
 
         # パラメータ
         self.declare_parameter('model', "Efficient-Large-Model/VILA1.5-3b")
@@ -83,7 +105,6 @@ class RosbagImageCaptionScorer(Node):  # ← クラス名変更
         if self.is_compressed:
             self.image_publisher = self.create_publisher(Image, "/source_image", 10)
 
-        # ループ処理
         timer_period = 0.001
         self.timer = self.create_timer(timer_period, self.nano_llm_inference)
 
@@ -101,7 +122,6 @@ class RosbagImageCaptionScorer(Node):  # ← クラス名変更
         """CompressedImage を受信して cv_img に変換"""
         self.image_stamp = data.header.stamp
         self.cv_img = self.cv_br.compressed_imgmsg_to_cv2(data, "bgr8")
-        # 必要なら再パブリッシュ (raw Image形式)
         if self.is_compressed:
             img_msg = self.cv_br.cv2_to_imgmsg(self.cv_img, encoding="bgr8")
             img_msg.header.stamp = data.header.stamp
@@ -117,7 +137,7 @@ class RosbagImageCaptionScorer(Node):  # ← クラス名変更
     def nano_llm_inference(self):
         """
         - 画像があれば LLM で推論
-        - 出力を下部黒枠付きの画像に描画し保存
+        - 出力テキストを、元画像サイズをそのまま保持した状態で、下部に大きな黒枠を追加して描画し保存
         - CSV に結果を追記
         """
         if self.cv_img is None:
@@ -126,17 +146,16 @@ class RosbagImageCaptionScorer(Node):  # ← クラス名変更
         stamp = self.image_stamp
         prompt = self.query.strip("][()")
 
-        # LLM が内部でPIL画像を要する場合があるのでRGBに変換してPILに渡す
+        # LLM内部がPIL画像を要求する場合：RGB変換
         cv_img_rgb = cv2.cvtColor(self.cv_img, cv2.COLOR_BGR2RGB)
         from PIL import Image as PILImage
         pil_img = PILImage.fromarray(cv_img_rgb)
 
-        # チャット履歴に画像とプロンプトを追加
+        # 推論
         self.chat_history.append('user', image=pil_img)
         self.chat_history.append('user', prompt, use_cache=True)
         embedding, _ = self.chat_history.embed_chat()
 
-        # 推論実行
         output = self.model.generate(
             inputs=embedding,
             kv_cache=self.chat_history.kv_cache,
@@ -145,7 +164,7 @@ class RosbagImageCaptionScorer(Node):  # ← クラス名変更
             do_sample=True,
         )
 
-        # 出力をパブリッシュ
+        # 出力の Publish
         output_msg = StringStamped()
         output_msg.header.stamp = stamp
         output_msg.data = output
@@ -157,40 +176,52 @@ class RosbagImageCaptionScorer(Node):  # ← クラス名変更
             inference_img_dir = os.path.join(self.save_dir, "inference_images")
             os.makedirs(inference_img_dir, exist_ok=True)
 
-            timestamp_str = f"{stamp.sec}_{stamp.nanosec}"
-            image_file_path = os.path.join(inference_img_dir, f"{timestamp_str}.png")
+            # 画像ファイル名用のタイムスタンプ（従来の sec_nanosec 形式）
+            timestamp_filename = f"{stamp.sec}_{stamp.nanosec}"
+            image_file_path = os.path.join(inference_img_dir, f"{timestamp_filename}.png")
 
-            # 下部に黒枠を追加した画像を作成
+            # CSV 用タイムスタンプ：秒単位の数値
+            timestamp_csv = f"{stamp.sec + stamp.nanosec * 1e-9:.6f}"
+
+            # 元画像サイズはそのまま保持し、下部に黒枠を追加（クロップはしない）
             height, width, _ = self.cv_img.shape
-            black_bar_height = height // 8
+            # 黒枠の高さを元画像の1/4に設定
+            black_bar_height = height // 4
             new_height = height + black_bar_height
 
             new_image = np.zeros((new_height, width, 3), dtype=np.uint8)
-            new_image[0:height, 0:width] = self.cv_img
+            new_image[:height, :width] = self.cv_img
 
-            # テキスト描画
-            text_str = output
+            # テキスト描画用設定
             font_face = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 1.0
-            thickness = 2
+            font_scale = 2.0  # 初期フォントサイズ
+            thickness = 3
             color = (255, 255, 255)
+            margin = 20
+            max_text_width = width - (margin * 2)
 
-            (text_width, text_height), baseline = cv2.getTextSize(
-                text_str, font_face, font_scale, thickness
-            )
-            text_x = max((width - text_width) // 2, 0)
-            text_y = height + (black_bar_height + text_height) // 2
+            # 折り返し処理
+            lines = wrap_text(output, max_text_width, font_face, font_scale, thickness)
+            (sample_w, sample_h), sample_base = cv2.getTextSize("A", font_face, font_scale, thickness)
+            line_height = sample_h + 8
+            total_text_height = len(lines) * line_height
 
-            cv2.putText(
-                new_image,
-                text_str,
-                (text_x, text_y),
-                font_face,
-                font_scale,
-                color,
-                thickness,
-                cv2.LINE_AA
-            )
+            # テキストが黒枠内に収まらなければ、フォントサイズを小さくして調整
+            while total_text_height > black_bar_height and font_scale > 0.5:
+                font_scale -= 0.1
+                lines = wrap_text(output, max_text_width, font_face, font_scale, thickness)
+                (sample_w, sample_h), sample_base = cv2.getTextSize("A", font_face, font_scale, thickness)
+                line_height = sample_h + 8
+                total_text_height = len(lines) * line_height
+
+            # 黒枠内にテキストを垂直中央に配置する開始Y座標の計算
+            start_y = height + (black_bar_height - total_text_height) // 2 + line_height
+
+            for line in lines:
+                (text_w, text_h), base = cv2.getTextSize(line, font_face, font_scale, thickness)
+                text_x = max((width - text_w) // 2, 0)
+                cv2.putText(new_image, line, (text_x, start_y), font_face, font_scale, color, thickness, cv2.LINE_AA)
+                start_y += line_height
 
             # 画像保存
             cv2.imwrite(image_file_path, new_image)
@@ -200,13 +231,11 @@ class RosbagImageCaptionScorer(Node):  # ← クラス名変更
             score = self.calculate_score(output)
             csv_path = os.path.join(self.save_dir, "inference_result.csv")
             write_header = not os.path.exists(csv_path)
-
             with open(csv_path, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 if write_header:
                     writer.writerow(["Timestamp", "Result", "filepath"])
-                writer.writerow([timestamp_str, score, image_file_path])
-
+                writer.writerow([timestamp_csv, score, image_file_path])
             self.get_logger().info(f"Appended score {score} to {csv_path}")
 
         # 推論完了後リセット
@@ -223,27 +252,22 @@ class RosbagImageCaptionScorer(Node):  # ← クラス名変更
           5) 上記いずれにも該当しなければ -3
         """
         out_lower = output.lower()
-
         if "parking lot" in out_lower:
             return 2
-
         has_private = "private" in out_lower
         has_public = "public" in out_lower
-
         if has_private and has_public:
             return 0
         if has_private:
             return -1
         if has_public:
             return 1
-
         return -3
 
 def main(args=None):
     rclpy.init(args=args)
-    node = RosbagImageCaptionScorer()  # クラス名を使用
+    node = RosbagImageCaptionScorer()
     rclpy.spin(node)
-
     node.destroy_node()
     rclpy.shutdown()
 
