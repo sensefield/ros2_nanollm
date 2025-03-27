@@ -7,38 +7,56 @@ import cv2
 import numpy as np
 import csv
 import os
+import yaml
+import sys
+from ament_index_python.packages import get_package_share_directory
 
 class LabelCollectorNode(Node):
     def __init__(self):
         super().__init__('label_collector_node')
 
-        qos = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+        self.label_config = self.load_label_config()
+        if 's' in self.label_config:
+            self.get_logger().error("キー 's' は is_stopping 用に予約されているため、ラベル定義で使用できません。")
+            rclpy.shutdown()
+            sys.exit(1)
+        if 'q' in self.label_config:
+            self.get_logger().error("キー 'q' は 終了 用に予約されているため、ラベル定義で使用できません。")
+            rclpy.shutdown()
+            sys.exit(1)
 
-        self.subscription = self.create_subscription(
-            CompressedImage,
-            '/input_image',
-            self.listener_callback,
-            qos)
-
-        self.dir_subscription = self.create_subscription(
-            String,
-            '/save_dir',
-            self.save_dir_callback,
-            10)
-
-        self.current_label = 1
+        self.key_to_label = self.label_config
+        self.current_key = list(self.key_to_label.keys())[0]
         self.is_stopping = 0
         self.csv_rows = []
         self.save_dir = None
         self.last_input_time = self.get_clock().now()
         self.input_timeout_sec = 3.0
 
+        qos = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+        self.subscription = self.create_subscription(
+            CompressedImage, '/input_image', self.listener_callback, qos)
+        self.dir_subscription = self.create_subscription(
+            String, '/save_dir', self.save_dir_callback, 10)
         self.create_timer(0.5, self.check_input_timeout)
 
         cv2.namedWindow("Input Image", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Input Image", 800, 600)
 
-        self.get_logger().info("キー操作: 1=公道, 2=私道, s=停車切替, q=手動保存+終了")
+        label_list = ", ".join(f"{k}={v['name']}" for k, v in self.key_to_label.items())
+        self.get_logger().info(f"キー操作: {label_list}, s=停車切替, q=手動保存+終了")
+
+    def load_label_config(self):
+        try:
+            pkg_path = get_package_share_directory('ros2_nanollm')
+            yaml_path = os.path.join(pkg_path, 'configs', 'labels.yaml')
+            with open(yaml_path, 'r') as f:
+                data = yaml.safe_load(f)
+                return data['labels']
+        except Exception as e:
+            self.get_logger().error(f"labels.yaml の読み込みに失敗: {e}")
+            rclpy.shutdown()
+            sys.exit(1)
 
     def save_dir_callback(self, msg: String):
         new_dir = msg.data
@@ -51,7 +69,6 @@ class LabelCollectorNode(Node):
 
     def listener_callback(self, msg: CompressedImage):
         self.last_input_time = self.get_clock().now()
-
         np_arr = np.frombuffer(msg.data, np.uint8)
         image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
@@ -59,7 +76,7 @@ class LabelCollectorNode(Node):
             self.get_logger().warn("画像のデコードに失敗しました")
             return
 
-        label_text = "Public" if self.current_label == 1 else "Private"
+        label_text = self.key_to_label[self.current_key]['name']
         stopping_text = "True" if self.is_stopping == 1 else "False"
         display_text = f'Label: {label_text} | Stopping: {stopping_text}'
         self.draw_label_overlay(image, display_text)
@@ -67,32 +84,30 @@ class LabelCollectorNode(Node):
         cv2.imshow("Input Image", image)
 
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('1'):
-            self.current_label = 1
-            self.get_logger().info('Label set to Public (1)')
-        elif key == ord('2'):
-            self.current_label = 2
-            self.get_logger().info('Label set to Private (2)')
-        elif key == ord('s'):
-            self.is_stopping = 1 - self.is_stopping
-            self.get_logger().info(f'is_stopping toggled to {self.is_stopping}')
-        elif key == ord('q'):
-            self.get_logger().info("手動保存 & ノード終了要求")
-            self.save_csv()
-            cv2.destroyAllWindows()
-            rclpy.shutdown()
+        if key != 255:
+            key_char = chr(key).lower()
+            if key_char == 's':
+                self.is_stopping = 1 - self.is_stopping
+                self.get_logger().info(f'is_stopping toggled to {self.is_stopping}')
+            elif key_char == 'q':
+                self.get_logger().info("手動保存 & ノード終了要求")
+                self.save_csv()
+                cv2.destroyAllWindows()
+                rclpy.shutdown()
+            elif key_char in self.key_to_label:
+                self.current_key = key_char
+                label_name = self.key_to_label[self.current_key]['name']
+                self.get_logger().info(f'Label set to {label_name} ({self.current_key})')
 
         timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        csv_label = 1 if self.current_label == 1 else -1
+        csv_label = self.key_to_label[self.current_key]['value']
         self.csv_rows.append([timestamp, csv_label, self.is_stopping])
 
     def draw_label_overlay(self, image, text, position=(10, 100)):
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 4.0
         thickness = 8
-        # 縁取り（白）
         cv2.putText(image, text, position, font, font_scale, (255, 255, 255), thickness + 4, cv2.LINE_AA)
-        # 本文字（緑）
         cv2.putText(image, text, position, font, font_scale, (0, 255, 0), thickness, cv2.LINE_AA)
 
     def check_input_timeout(self):
