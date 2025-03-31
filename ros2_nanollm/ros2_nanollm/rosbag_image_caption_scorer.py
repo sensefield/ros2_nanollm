@@ -234,8 +234,8 @@ class RosbagImageCaptionScorer(Node):
             with open(csv_path, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 if write_header:
-                    writer.writerow(["Timestamp", "Result", "filepath"])
-                writer.writerow([timestamp_csv, score, image_file_path])
+                    writer.writerow(["Timestamp", "Result", "filepath","output"])
+                writer.writerow([timestamp_csv, score, image_file_path, output])
             self.get_logger().info(f"Appended score {score} to {csv_path}")
 
         # 推論完了後リセット
