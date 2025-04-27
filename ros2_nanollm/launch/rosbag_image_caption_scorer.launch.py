@@ -17,6 +17,7 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.substitutions import LaunchConfiguration
 from launch.actions import DeclareLaunchArgument
+from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     launch_args = [
@@ -47,7 +48,8 @@ def generate_launch_description():
     api = LaunchConfiguration('api')
     quantization = LaunchConfiguration('quantization')
     is_compressed = LaunchConfiguration('is_compressed')
-    query = LaunchConfiguration('query')
+    # query = LaunchConfiguration('query')
+    query = ParameterValue(LaunchConfiguration('query'), value_type=str)
 
     nanollm_node = Node(
             package='ros2_nanollm', #make sure package is named this

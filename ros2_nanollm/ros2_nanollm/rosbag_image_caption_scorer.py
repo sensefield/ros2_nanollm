@@ -9,6 +9,7 @@ from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
 from nano_llm import NanoLLM, ChatHistory
 import numpy as np
+import time
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 import os
 import csv
@@ -152,18 +153,22 @@ class RosbagImageCaptionScorer(Node):
         pil_img = PILImage.fromarray(cv_img_rgb)
 
         # 推論
-        self.chat_history.append('user', image=pil_img)
+        self.chat_history = ChatHistory(self.model)
         self.chat_history.append('user', prompt, use_cache=True)
+        self.chat_history.append('user', image=pil_img)
         embedding, _ = self.chat_history.embed_chat()
-
+        t0 = time.perf_counter_ns()
         output = self.model.generate(
             inputs=embedding,
             kv_cache=self.chat_history.kv_cache,
-            min_new_tokens=10,
+            min_new_tokens=1,
+            max_new_tokens=20,
             streaming=False,
-            do_sample=True,
-        )
+            do_sample=False,
 
+        )
+        t1 = time.perf_counter_ns()
+        self.get_logger().info(f"LLM Prediction time: {(t1 - t0) / 1e9:.4f} sec")
         # 出力の Publish
         output_msg = StringStamped()
         output_msg.header.stamp = stamp
@@ -252,10 +257,19 @@ class RosbagImageCaptionScorer(Node):
           5) 上記いずれにも該当しなければ -3
         """
         out_lower = output.lower()
-        if "parking lot" in out_lower:
-            return 2
-        has_private = "private" in out_lower
-        has_public = "public" in out_lower
+        # if "parking lot" in out_lower:
+        #     return 2
+        # has_private = "private" in out_lower
+        # has_public = "public" in out_lower
+        # if has_private and has_public:
+        #     return 0
+        # if has_private:
+        #     return -1
+        # if has_public:
+        #     return 1
+        # return -3
+        has_private = "private" in out_lower or "parking lot" in out_lower
+        has_public = "public" in out_lower or "intersection" in out_lower
         if has_private and has_public:
             return 0
         if has_private:
@@ -263,6 +277,8 @@ class RosbagImageCaptionScorer(Node):
         if has_public:
             return 1
         return -3
+
+        
 
 def main(args=None):
     rclpy.init(args=args)
